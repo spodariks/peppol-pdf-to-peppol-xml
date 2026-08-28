@@ -4,8 +4,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from .latvia import validate_latvian_requirements
 from .ubl import embed_original_pdf, enforce_peppol_order, normalize_prepaid_amount, parse, serialize, set_invoice_number_as_buyer_reference, set_references
-from .validator import PeppolValidatorClient, ValidationResult
+from .validator import PeppolValidatorClient, ValidationResult, ValidatorUnavailable
 
 
 @dataclass(frozen=True)
@@ -20,6 +21,7 @@ class PipelineResult:
     xml: bytes
     validations: tuple[ValidationResult, ...]
     applied_fixes: tuple[str, ...]
+    validator_error: str | None = None
 
 
 class ValidationPipeline:
@@ -40,9 +42,15 @@ class ValidationPipeline:
         enforce_peppol_order(root)
         xml = serialize(root)
         results: list[ValidationResult] = []
+        latvian = validate_latvian_requirements(root)
+        if latvian.errors:
+            return PipelineResult("STOP", xml, (), tuple(fixes + [f"{issue.rule}: {issue.message}" for issue in latvian.errors]))
 
         for correction_round in range(self.max_correction_rounds + 1):
-            result = self.validator.validate(xml)
+            try:
+                result = self.validator.validate(xml)
+            except ValidatorUnavailable as exc:
+                return PipelineResult("VALIDATOR_ERROR", xml, tuple(results), tuple(fixes), str(exc))
             results.append(result)
             if result.status == "valid":
                 return PipelineResult("PASS", xml, tuple(results), tuple(fixes))

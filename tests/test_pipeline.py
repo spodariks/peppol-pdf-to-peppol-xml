@@ -48,6 +48,14 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(1, len(validator.calls))
         self.assertNotIn(b"InvoiceLine", outcome.xml)
 
+    def test_validator_transport_failure_is_not_a_pass(self):
+        from peppol_pdf_to_xml.validator import ValidatorUnavailable
+        class OfflineValidator:
+            def validate(self, _xml): raise ValidatorUnavailable("offline")
+        outcome = ValidationPipeline(OfflineValidator()).run(INVOICE, b"pdf")
+        self.assertEqual("VALIDATOR_ERROR", outcome.status)
+        self.assertEqual("offline", outcome.validator_error)
+
     def test_ordering_places_buyer_reference_before_order_reference(self):
         validator = FakeValidator([result("valid")])
         xml = ValidationPipeline(validator).run(INVOICE, b"pdf", ReferenceData("PO", "BUY")).xml
