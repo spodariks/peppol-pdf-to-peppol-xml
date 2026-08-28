@@ -1,57 +1,29 @@
 ---
 name: validating-peppol-invoices
-description: Validate Peppol UBL XML invoices and credit notes against EN16931 and Peppol BIS Billing 3.0 using the Peppol Validator API. Use after generating or modifying any Peppol XML.
+description: Validate Peppol UBL XML invoices through Peppol Validator and make only explicitly allowed, source-backed deterministic corrections.
 ---
 
 # Validating Peppol invoices
 
-Validate every generated UBL invoice or credit note before release.
+POST raw UBL XML to `https://peppolvalidator.com/api/v1/validate` with
+`Content-Type: application/xml`. The JSON result contains `status` (`valid`,
+`invalid`, or `error`) plus error `rule`, `message`, and XPath `location`.
 
-## API
+## Required loop
 
-POST:
-`https://peppolvalidator.com/api/v1/validate`
+1. Generate UBL 2.1 XML from extracted PDF data. Do not invent invoice values.
+2. Apply source-backed project rules before validation:
+   - PO number goes to BT-13 (`cac:OrderReference/cbc:ID`).
+   - Explicit buyer reference goes to BT-10 (`cbc:BuyerReference`).
+   - When neither exists, use the invoice number as BT-10.
+   - A negative Prāds/Priekšapmaksa becomes the absolute BT-113 `PrepaidAmount`.
+3. Embed the original PDF as `AdditionalDocumentReference` before final validation.
+4. Validate. Inspect every error's rule and XPath location.
+5. Fix only an allowlisted, deterministic issue with source evidence; e.g.
+   `PEPPOL-EN16931-R003` may use the documented invoice-number fallback when
+   there is no extracted PO or explicit Buyer Reference. Re-order the
+   relevant UBL sibling tree; then validate again. Otherwise STOP and surface the
+   original errors. Never make up parties, lines, taxes, identifiers, dates, or amounts.
 
-Send raw XML with:
-`Content-Type: application/xml`
-
-No API key is required.
-
-## Procedure
-
-1. Read the generated XML.
-2. POST the exact XML bytes to the API.
-3. Parse JSON response.
-4. If `status == "valid"`, continue.
-5. If `status == "invalid"`, inspect every item in `errors`.
-6. Use `rule`, `message`, and `location` (XPath) to identify the problem.
-7. Fix the generator or XML only when the correction is supported by the source PDF and project rules.
-8. Revalidate.
-9. Repeat until valid or until an error cannot be resolved safely.
-10. Never claim EC/Peppol validation PASS without an actual validator response.
-
-Warnings do not equal errors. Preserve warnings in the final validation report.
-
-## Supported documents
-
-The API automatically detects UBL 2.1 Invoice and CreditNote and validates them against:
-- CEN EN16931 BR-* rules
-- Peppol BIS Billing 3.0 PEPPOL-EN16931-* rules
-
-## Project-specific rules
-
-Buyer reference priority:
-1. PO number -> BT-13
-2. Explicit Buyer Reference -> BT-10
-3. Invoice number -> BT-10 fallback
-
-Prepayment:
-If the PDF contains `Parāds (+) / Priekšapmaksa (-)` and the value is negative,
-use its absolute value as BT-113 PrepaidAmount.
-
-UBL ordering:
-Use the Peppol BIS Billing 3.0 tree separately for every UBL element.
-Do not apply one global child-element order.
-
-Finalization:
-Only release the XML after local checks pass and the Peppol Validator reports `valid`.
+The bundled pipeline implements this policy and retries only transient Validator
+HTTP 500/503 failures. A `valid` result is PASS; `invalid` with no safe fix is STOP.
